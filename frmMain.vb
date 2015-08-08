@@ -33,7 +33,7 @@ Public Class frmMain
     Private Sub frmMain_Load( sender As Object,  e As EventArgs) Handles MyBase.Load
         cbShowSteps_CheckedChanged(New Object, New EventArgs)
     End Sub
-
+    
     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
     Private Sub cbShowSteps_CheckedChanged( sender As Object,  e As EventArgs) Handles cbShowSteps.CheckedChanged
         If (cbShowSteps.Checked = False) Then
@@ -72,137 +72,163 @@ Public Class frmMain
 
         lblChosenFile.Text = ofdOpenFile.FileName           'update label with file name
 
-        Dim imgSmoothed As Image(Of Bgr, Byte)
-        Dim imgGrayColorFiltered As Image(Of Gray, Byte)
-        Dim imgCanny As Image(Of Gray, Byte)
-        Dim imgContours As Image(Of Bgr, Byte)
-        Dim imgAllConvexHulls As Image(Of Bgr, Byte)
-        Dim imgConvexHulls3To7 As Image(Of Bgr, Byte)
-        Dim imgConvexHullsPointingUp As Image(Of Bgr, Byte)
-        Dim imgPolygons As Image(Of Bgr, Byte)
+        Dim imgOriginalWithCones As Image(Of Bgr, Byte) = imgOriginal.Clone()
+        Dim imgHSV As Image(Of Hsv, Byte)
 
-        'imgOriginal._EqualizeHist()
+        Dim imgThreshLow As Image(Of Gray, Byte)
+        Dim imgThreshHigh As Image(Of Gray, Byte)
 
-        imgSmoothed = imgOriginal.PyrDown().PyrUp()
-        imgSmoothed._SmoothGaussian(3)
-
-        imgGrayColorFiltered = imgSmoothed.InRange(New Bgr(0, 0, 150), New Bgr(85, 125, 255))
-		imgGrayColorFiltered = imgGrayColorFiltered.PyrDown().PyrUp()						'repeat smoothing process after InRange function call,
-		imgGrayColorFiltered._SmoothGaussian(3)	
-
-        Dim grayCannyThreshold As Gray = New Gray(160)
-        Dim grayThreshLinking As Gray = New Gray(80)
-
-        imgGrayColorFiltered._Erode(1)
-        imgGrayColorFiltered._Dilate(1)
-
-        imgCanny = imgGrayColorFiltered.Canny(160, 80)
-
-        Dim contours As Contour(Of Point) = imgCanny.FindContours(CHAIN_APPROX_METHOD.CV_CHAIN_APPROX_SIMPLE, RETR_TYPE.CV_RETR_LIST)
+        Dim imgThresh As Image(Of Gray, Byte)
         
-        Dim listOfContours As List(Of Contour(Of Point)) = New List(Of Contour(Of Point))
-        Dim listOfConvexHulls As List(Of Seq(Of Point)) = New List(Of Seq(Of Point))
+        Dim imgThreshSmoothed As Image(Of Gray, Byte)
 
-        imgContours = imgOriginal.CopyBlank()
+        Dim imgCanny As Image(Of Gray, Byte)
+
+        Dim imgContours As Image(Of Gray, Byte)
+
+        Dim imgAllConvexHulls As Image(Of Bgr, Byte)
+        Dim imgConvexHulls3To10 As Image(Of Bgr, Byte)
+        Dim imgConvexHullsPointingUp As Image(Of Bgr, Byte)
+        Dim imgTrafficConesWithOverlapsRemoved As Image(Of Bgr, Byte)
+
+        Dim listOfContours As List(Of Contour(Of Point)) = New List(Of Contour(Of Point))
+        Dim listOfTrafficCones As List(Of Seq(Of Point)) = New List(Of Seq(Of Point))
+        
+        imgHSV = imgOriginal.Convert(Of Hsv, Byte)
+
+        imgThreshLow = imgHSV.InRange(New Hsv(0, 135, 135), New Hsv(15, 255, 255))
+        imgThreshHigh = imgHSV.InRange(New Hsv(159, 135, 135), New Hsv(179, 255, 255))
+        
+        imgThresh = imgThreshLow Or imgThreshHigh
+
+        imgThreshSmoothed = imgThresh.Clone()
+
+        imgThreshSmoothed._Erode(1)
+        imgThreshSmoothed._Dilate(1)
+        
+        imgThreshSmoothed._SmoothGaussian(3)
+
+        Dim dblCannyThreshold As Double = 160.0
+        Dim dblThreshLinking As Double = 80.0
+
+        imgCanny = imgThreshSmoothed.Canny(dblCannyThreshold, dblThreshLinking)
+
+        Dim contours As Contour(Of Point) = imgCanny.FindContours(CHAIN_APPROX_METHOD.CV_CHAIN_APPROX_SIMPLE, RETR_TYPE.CV_RETR_EXTERNAL)
+
+        imgContours = imgThresh.CopyBlank()
         imgAllConvexHulls = imgOriginal.CopyBlank()
-        imgConvexHulls3To7 = imgOriginal.CopyBlank()
+        imgConvexHulls3To10 = imgOriginal.CopyBlank()
         imgConvexHullsPointingUp = imgOriginal.CopyBlank()
-        imgPolygons = imgOriginal.CopyBlank()
+        imgTrafficConesWithOverlapsRemoved = imgOriginal.CopyBlank()
 
         While (Not contours Is Nothing)
-            'Dim contour As Contour(Of Point) = contours.ApproxPoly(10.0)
-            Dim contour As Contour(Of Point) = contours.ApproxPoly(10.0)
+            Dim contour As Contour(Of Point) = contours.ApproxPoly(8.0)
 
-            CvInvoke.cvDrawContours(imgContours, contour, New MCvScalar(255, 255, 255), New MCvScalar(255, 255, 255), 100, 1, LINE_TYPE.CV_AA, New Point(0, 0))
+            listOfContours.Add(contour)
+            contours = contours.HNext
+        End While
+
+        For Each contour As Contour(Of Point) In listOfContours
+            CvInvoke.cvDrawContours(imgContours, contour, New MCvScalar(255), New MCvScalar(255), 100, 1, LINE_TYPE.CV_AA, New Point(0, 0))
 
             Dim convexHull As Seq(Of Point) = contour.GetConvexHull(ORIENTATION.CV_CLOCKWISE)
 
             imgAllConvexHulls.Draw(convexHull, New Bgr(Color.Yellow), 2)
 
-            If (convexHull.Total >= 3 And convexHull.Total <= 8) Then
-                imgConvexHulls3To7.Draw(convexHull, New Bgr(Color.Yellow), 2)
-                If (convexHullIsPointingUp(convexHull)) Then
-                    imgConvexHullsPointingUp.Draw(convexHull, New Bgr(Color.Yellow), 2)
-                    listOfConvexHulls.Add(convexHull)
-                End If
+            If (convexHull.Total >= 3 And convexHull.Total <= 10) Then
+                imgConvexHulls3To10.Draw(convexHull, New Bgr(Color.Yellow), 2)
+            Else
+                Continue For
             End If
 
-            'CvInvoke.cvWaitKey(0)
-            'Application.DoEvents()
-
-            contours = contours.HNext
-        End While
-
-        For Each convexHull As Seq(Of Point) In listOfConvexHulls
-            imgPolygons.Draw(convexHull, New Bgr(Color.Yellow), 2)
-            imgOriginal.Draw(convexHull, New Bgr(Color.Yellow), 2)
+            If (convexHullIsPointingUp(convexHull)) Then
+                imgConvexHullsPointingUp.Draw(convexHull, New Bgr(Color.Yellow), 2)
+            Else
+                Continue For
+            End If
+                        'if convexHull passed all the conditionals, its a cone, so add to list
+            listOfTrafficCones.Add(convexHull)
         Next
 
-        CvInvoke.cvShowImage("imgSmoothed", imgSmoothed)
-        CvInvoke.cvShowImage("imgGrayColorFiltered", imgGrayColorFiltered)
-        CvInvoke.cvShowImage("imgCanny", imgCanny)
-        CvInvoke.cvShowImage("imgContours", imgContours)
-        CvInvoke.cvShowImage("imgAllConvexHulls", imgAllConvexHulls)
-        CvInvoke.cvShowImage("imgConvexHulls3To7", imgConvexHulls3To7)
-        CvInvoke.cvShowImage("imgConvexHullsPointingUp", imgConvexHullsPointingUp)
-        CvInvoke.cvShowImage("imgPolys", imgPolygons)
+        listOfTrafficCones = removeInnerOverlappingCones(listOfTrafficCones)
 
-        ibOriginal.Image = imgOriginal
+        For Each trafficCone As Seq(Of Point) In listOfTrafficCones
+            imgTrafficConesWithOverlapsRemoved.Draw(trafficCone, New Bgr(Color.Yellow), 2)
+            imgOriginalWithCones.Draw(trafficCone, New Bgr(Color.Yellow), 2)
+        Next
+
+        txtInfo.AppendText("---------------------------------------" + vbCrLf + vbCrLf)
+
+        If (listOfTrafficCones Is Nothing) Then
+            txtInfo.AppendText("no traffic cones were found" + vbCrLf)
+        ElseIf (listOfTrafficCones.Count = 0) Then
+            txtInfo.AppendText("no traffic cones were found" + vbCrLf)
+        ElseIf (listOfTrafficCones.Count = 1) Then
+            txtInfo.AppendText("1 traffic cone was found" + vbCrLf)
+        ElseIf (listOfTrafficCones.Count > 1) Then
+            txtInfo.AppendText(listOfTrafficCones.Count.ToString() + " traffic cones were found" + vbCrLf)
+        End If
+
+        If (cbShowSteps.Checked = True) Then
+            CvInvoke.cvShowImage("imgOriginal", imgOriginal)
+            CvInvoke.cvShowImage("imgHSV", imgHSV)
+
+            CvInvoke.cvShowImage("imgThreshLow", imgThreshLow)
+            CvInvoke.cvShowImage("imgThreshHigh", imgThreshHigh)
+
+            CvInvoke.cvShowImage("imgThresh", imgThresh)
+            CvInvoke.cvShowImage("imgThreshSmoothed", imgThreshSmoothed)
+
+            CvInvoke.cvShowImage("imgCanny", imgCanny)
+
+            CvInvoke.cvShowImage("imgContours", imgContours)
+
+            CvInvoke.cvShowImage("imgAllConvexHulls", imgAllConvexHulls)
+            CvInvoke.cvShowImage("imgConvexHulls3To10", imgConvexHulls3To10)
+            CvInvoke.cvShowImage("imgConvexHullsPointingUp", imgConvexHullsPointingUp)
+            CvInvoke.cvShowImage("imgTrafficConesWithOverlapsRemoved", imgTrafficConesWithOverlapsRemoved)
+        End If
+        
+        ibOriginal.Image = imgOriginalWithCones
 
     End Sub
 
     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
     Function convexHullIsPointingUp(convexHull As Seq(Of Point)) As Boolean
-
         Dim dblAspectRatio As Double = CDbl(convexHull.BoundingRectangle.Width) / CDbl(convexHull.BoundingRectangle.Height)
 
-        If (dblAspectRatio > 0.75) Then Return False
+        If (dblAspectRatio > 0.8) Then Return False
 
-        Dim moments As MCvMoments = convexHull.GetMoments()
+        Dim intYCenter As Integer = convexHull.BoundingRectangle.Y + CInt(CDbl(convexHull.BoundingRectangle.Height) / 2.0)
 
-        Dim intXCenterOfMass As Integer = CInt(moments.GravityCenter.x)
-        Dim intYCenterOfMass As Integer = CInt(moments.GravityCenter.y)
-        
-        Dim intNumPointsAboveCenterOfMass As Integer = 0
+        Dim listOfPointsAboveCenter As List(Of Point) = New List(Of Point)
+        Dim listOfPointsBelowCenter As List(Of Point) = New List(Of Point)
 
         For Each point As Point In convexHull
-            If (point.Y < intYCenterOfMass) Then
-                intNumPointsAboveCenterOfMass = intNumPointsAboveCenterOfMass + 1
+            If (point.Y < intYCenter) Then
+                listOfPointsAboveCenter.Add(point)
+            ElseIf (point.Y >= intYCenter) Then
+                listOfPointsBelowCenter.Add(point)
             End If
         Next
 
-        Dim dblFractionOfPointsAboveCenterOfMass As Double = CDbl(intNumPointsAboveCenterOfMass) / CDbl(convexHull.Total)
+        Dim intLeftMostPointBelowCenter As Integer = convexHull(0).X
+        Dim intRightMostPointBelowCenter As Integer = convexHull(0).X
 
-        'If (dblFractionOfPointsAboveCenterOfMass >= 0.5) Then Return False
-        
-        Dim listOfPointsAboveCenterOfMass As List(Of Point) = New List(Of Point)
-        Dim listOfPointsBelowCenterOfMass As List(Of Point) = New List(Of Point)
-
-        For Each point As Point In convexHull
-            If (point.Y < intYCenterOfMass) Then
-                listOfPointsAboveCenterOfMass.Add(point)
-            ElseIf (point.Y > intYCenterOfMass) Then
-                listOfPointsBelowCenterOfMass.Add(point)
+        For Each point As Point In listOfPointsBelowCenter
+            If (point.X < intLeftMostPointBelowCenter) Then
+                intLeftMostPointBelowCenter = point.X
             End If
         Next
 
-        Dim intLeftMostPointBelowCenterOfMass As Integer = 1000000
-        Dim intRightMostPointBelowCenterOfMass As Integer = -1000000
-
-        For Each point As Point In listOfPointsBelowCenterOfMass
-            If (point.X < intLeftMostPointBelowCenterOfMass) Then
-                intLeftMostPointBelowCenterOfMass = point.X
+        For Each point As Point In listOfPointsBelowCenter
+            If (point.X > intRightMostPointBelowCenter) Then
+                intRightMostPointBelowCenter = point.X
             End If
         Next
 
-        For Each point As Point In listOfPointsBelowCenterOfMass
-            If (point.X > intRightMostPointBelowCenterOfMass) Then
-                intRightMostPointBelowCenterOfMass = point.X
-            End If
-        Next
-
-        For Each point As Point In listOfPointsAboveCenterOfMass
-            If (point.X < intLeftMostPointBelowCenterOfMass Or point.X > intRightMostPointBelowCenterOfMass) Then
+        For Each point As Point In listOfPointsAboveCenter
+            If (point.X < intLeftMostPointBelowCenter Or point.X > intRightMostPointBelowCenter) Then
                 Return False
             End If
         Next
@@ -210,11 +236,46 @@ Public Class frmMain
         Return True
     End Function
 
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Function removeInnerOverlappingCones(listOfCones As List(Of Seq(Of Point))) As List(Of Seq(Of Point))
+
+        Dim listOfConesWithInnerCharRemoved As List(Of Seq(Of Point)) = New List(Of Seq(Of Point))(listOfCones)
+
+        For Each firstCone As Seq(Of Point) In listOfCones
+            For Each secondCone As Seq(Of Point) In listOfCones
+                If (Not firstCone.Equals(secondCone)) Then
+                    
+                    Dim firstConeMoments As MCvMoments = firstCone.GetMoments()
+                    Dim secondConeMoments As MCvMoments = secondCone.GetMoments()
+
+                    Dim sngFirstConeXCenterOfGravity As Single = CSng(firstConeMoments.GravityCenter.x)
+                    Dim sngFirstConeYCenterOfGravity As Single = CSng(firstConeMoments.GravityCenter.y)
+                    
+                    Dim sngSecondConeXCenterOfGravity As Single = CSng(secondConeMoments.GravityCenter.x)
+                    Dim sngSecondConeYCenterOfGravity As Single = CSng(secondConeMoments.GravityCenter.y)
+
+                    Dim ptfFirstConeCenterOfGravity As PointF = New PointF(sngFirstConeXCenterOfGravity, sngFirstConeYCenterOfGravity)
+                    Dim ptfSecondConeCenterOfGravity As PointF = New PointF(sngSecondConeXCenterOfGravity, sngSecondConeYCenterOfGravity)
+
+                    If(firstCone.InContour(ptfSecondConeCenterOfGravity) > 0.0 Or secondCone.InContour(ptfFirstConeCenterOfGravity) > 0.0) Then
+                                    'if we get in here we have found overlapping cones
+                                    'next we identify which cone is smaller, then if that char was not already removed on a previous pass, remove it
+                        If (firstCone.Area < secondCone.Area) Then                              'if first cone is smaller than second cone
+                            If (listOfConesWithInnerCharRemoved.Contains(firstCone)) Then       'if first cone was not already removed on a previous pass . . .
+                                listOfConesWithInnerCharRemoved.Remove(firstCone)               'then remove first cone
+                            End If
+                        ElseIf (secondCone.Area <= firstCone.Area) Then                         'else if second cone is smaller than first cone
+                            If (listOfConesWithInnerCharRemoved.Contains(secondCone)) Then      'if second cone was not already removed on a previous pass . . .
+                                listOfConesWithInnerCharRemoved.Remove(secondCone)              'then remove second cone
+                            End If
+                        End If
+                    End If
+
+                End If
+            Next
+        Next
+
+        Return listOfConesWithInnerCharRemoved
+    End Function
+
 End Class
-
-
-
-
-
-
-
