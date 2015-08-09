@@ -22,27 +22,14 @@ Imports Emgu.CV.UI                  '
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 Public Class frmMain
 
-    ' module level variables ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
-    Const IMAGE_BOX_PCT_SHOW_STEPS_NOT_CHECKED As Single = 75
-    Const TEXT_BOX_PCT_SHOW_STEPS_NOT_CHECKED  As Single = 25
-
-    Const IMAGE_BOX_PCT_SHOW_STEPS_CHECKED As Single = 55
-    Const TEXT_BOX_PCT_SHOW_STEPS_CHECKED As Single = 45
-
     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
     Private Sub frmMain_Load( sender As Object,  e As EventArgs) Handles MyBase.Load
-        cbShowSteps_CheckedChanged(New Object, New EventArgs)
+        
     End Sub
     
     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
     Private Sub cbShowSteps_CheckedChanged( sender As Object,  e As EventArgs) Handles cbShowSteps.CheckedChanged
-        If (cbShowSteps.Checked = False) Then
-            tableLayoutPanel.RowStyles.Item(1).Height = IMAGE_BOX_PCT_SHOW_STEPS_NOT_CHECKED
-            tableLayoutPanel.RowStyles.Item(2).Height = TEXT_BOX_PCT_SHOW_STEPS_NOT_CHECKED
-        ElseIf (cbShowSteps.Checked = True) Then
-            tableLayoutPanel.RowStyles.Item(1).Height = IMAGE_BOX_PCT_SHOW_STEPS_CHECKED
-            tableLayoutPanel.RowStyles.Item(2).Height = TEXT_BOX_PCT_SHOW_STEPS_CHECKED
-        End If
+
     End Sub
 
     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
@@ -72,8 +59,35 @@ Public Class frmMain
 
         lblChosenFile.Text = ofdOpenFile.FileName           'update label with file name
 
-        Dim imgOriginalWithCones As Image(Of Bgr, Byte) = imgOriginal.Clone()
-        Dim imgHSV As Image(Of Hsv, Byte)
+        Dim listOfTrafficCones As List(Of Seq(Of Point)) = findTrafficCones(imgOriginal)        'call find traffic cones function
+
+        Dim imgOriginalWithCones As Image(Of Bgr, Byte) = imgOriginal.Clone()           'clone original image so we don't have to alter original image
+
+        For Each trafficCone As Seq(Of Point) In listOfTrafficCones                     'draw found cones on image
+            imgOriginalWithCones.Draw(trafficCone, New Bgr(Color.Yellow), 2)
+            drawGreenDotAtConeCenter(trafficCone, imgOriginalWithCones)
+        Next
+
+        txtInfo.AppendText("---------------------------------------" + vbCrLf + vbCrLf)
+
+        If (listOfTrafficCones Is Nothing) Then
+            txtInfo.AppendText("no traffic cones were found" + vbCrLf + vbCrLf)
+        ElseIf (listOfTrafficCones.Count = 0) Then
+            txtInfo.AppendText("no traffic cones were found" + vbCrLf + vbCrLf)
+        ElseIf (listOfTrafficCones.Count = 1) Then
+            txtInfo.AppendText("1 traffic cone was found" + vbCrLf + vbCrLf)
+        ElseIf (listOfTrafficCones.Count > 1) Then
+            txtInfo.AppendText(listOfTrafficCones.Count.ToString() + " traffic cones were found" + vbCrLf + vbCrLf)
+        End If
+        
+        ibOriginal.Image = imgOriginalWithCones
+    End Sub
+
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Function findTrafficCones(imgOriginal As Image(Of Bgr, Byte)) As List(Of Seq(Of Point))
+        closeShowStepsWindows()                                 'close any windows that were open from a previous time this function was calles
+
+        Dim imgHSV As Image(Of Hsv, Byte)                       'declare various images, the names should be self-explanatory
 
         Dim imgThreshLow As Image(Of Gray, Byte)
         Dim imgThreshHigh As Image(Of Gray, Byte)
@@ -88,11 +102,12 @@ Public Class frmMain
 
         Dim imgAllConvexHulls As Image(Of Bgr, Byte)
         Dim imgConvexHulls3To10 As Image(Of Bgr, Byte)
-        Dim imgConvexHullsPointingUp As Image(Of Bgr, Byte)
+        Dim imgTrafficCones As Image(Of Bgr, Byte)
         Dim imgTrafficConesWithOverlapsRemoved As Image(Of Bgr, Byte)
 
         Dim listOfContours As List(Of Contour(Of Point)) = New List(Of Contour(Of Point))
         Dim listOfTrafficCones As List(Of Seq(Of Point)) = New List(Of Seq(Of Point))
+        Dim listOfTrafficConesWithOverlapsRemoved As List(Of Seq(Of Point)) = New List(Of Seq(Of Point))
         
         imgHSV = imgOriginal.Convert(Of Hsv, Byte)
 
@@ -118,7 +133,7 @@ Public Class frmMain
         imgContours = imgThresh.CopyBlank()
         imgAllConvexHulls = imgOriginal.CopyBlank()
         imgConvexHulls3To10 = imgOriginal.CopyBlank()
-        imgConvexHullsPointingUp = imgOriginal.CopyBlank()
+        imgTrafficCones = imgOriginal.CopyBlank()
         imgTrafficConesWithOverlapsRemoved = imgOriginal.CopyBlank()
 
         While (Not contours Is Nothing)
@@ -134,64 +149,46 @@ Public Class frmMain
             Dim convexHull As Seq(Of Point) = contour.GetConvexHull(ORIENTATION.CV_CLOCKWISE)
 
             imgAllConvexHulls.Draw(convexHull, New Bgr(Color.Yellow), 2)
-
-            If (convexHull.Total >= 3 And convexHull.Total <= 10) Then
-                imgConvexHulls3To10.Draw(convexHull, New Bgr(Color.Yellow), 2)
+            
+            If (convexHull.Total >= 3 And convexHull.Total <= 10) Then                  'if convex hull has between 3 and 10 points,
+                imgConvexHulls3To10.Draw(convexHull, New Bgr(Color.Yellow), 2)          'draw convex hull on applicable steps image and keep going
             Else
-                Continue For
+                Continue For            'else if convex hull had less than 3 points or more than 10 points, return to top of For without adding to list of cones
             End If
 
-            If (convexHullIsPointingUp(convexHull)) Then
-                imgConvexHullsPointingUp.Draw(convexHull, New Bgr(Color.Yellow), 2)
+            If (convexHullIsPointingUp(convexHull)) Then        'if convex hull is pointing up . . .
+                                                                    'if we get in here we have passed all the ifs, therefore the convex hull is a cone,
+                listOfTrafficCones.Add(convexHull)                              'so add to list
+                imgTrafficCones.Draw(convexHull, New Bgr(Color.Yellow), 2)      'and draw on traffic cones image
             Else
-                Continue For
+                Continue For            'else if convex hull was not pointing up, return to top of For without adding to list of cones
             End If
-                        'if convexHull passed all the conditionals, its a cone, so add to list
-            listOfTrafficCones.Add(convexHull)
         Next
-
-        listOfTrafficCones = removeInnerOverlappingCones(listOfTrafficCones)
-
-        For Each trafficCone As Seq(Of Point) In listOfTrafficCones
-            imgTrafficConesWithOverlapsRemoved.Draw(trafficCone, New Bgr(Color.Yellow), 2)
-            imgOriginalWithCones.Draw(trafficCone, New Bgr(Color.Yellow), 2)
+                                                                                                    'remove any inner overlapping cones,
+        listOfTrafficConesWithOverlapsRemoved = removeInnerOverlappingCones(listOfTrafficCones)     'this will keep from counting the same cone multiple times
+        
+        For Each trafficCone As Seq(Of Point) In listOfTrafficConesWithOverlapsRemoved             'draw on final show steps image
+            imgTrafficConesWithOverlapsRemoved.Draw(trafficCone, New Bgr(Color.Yellow), 2)         'draw cones
+            drawGreenDotAtConeCenter(trafficCone, imgTrafficConesWithOverlapsRemoved)              'draw green dot at cone center
         Next
-
-        txtInfo.AppendText("---------------------------------------" + vbCrLf + vbCrLf)
-
-        If (listOfTrafficCones Is Nothing) Then
-            txtInfo.AppendText("no traffic cones were found" + vbCrLf)
-        ElseIf (listOfTrafficCones.Count = 0) Then
-            txtInfo.AppendText("no traffic cones were found" + vbCrLf)
-        ElseIf (listOfTrafficCones.Count = 1) Then
-            txtInfo.AppendText("1 traffic cone was found" + vbCrLf)
-        ElseIf (listOfTrafficCones.Count > 1) Then
-            txtInfo.AppendText(listOfTrafficCones.Count.ToString() + " traffic cones were found" + vbCrLf)
-        End If
 
         If (cbShowSteps.Checked = True) Then
             CvInvoke.cvShowImage("imgOriginal", imgOriginal)
             CvInvoke.cvShowImage("imgHSV", imgHSV)
-
             CvInvoke.cvShowImage("imgThreshLow", imgThreshLow)
             CvInvoke.cvShowImage("imgThreshHigh", imgThreshHigh)
-
             CvInvoke.cvShowImage("imgThresh", imgThresh)
             CvInvoke.cvShowImage("imgThreshSmoothed", imgThreshSmoothed)
-
             CvInvoke.cvShowImage("imgCanny", imgCanny)
-
             CvInvoke.cvShowImage("imgContours", imgContours)
-
             CvInvoke.cvShowImage("imgAllConvexHulls", imgAllConvexHulls)
             CvInvoke.cvShowImage("imgConvexHulls3To10", imgConvexHulls3To10)
-            CvInvoke.cvShowImage("imgConvexHullsPointingUp", imgConvexHullsPointingUp)
+            CvInvoke.cvShowImage("imgTrafficCones", imgTrafficCones)
             CvInvoke.cvShowImage("imgTrafficConesWithOverlapsRemoved", imgTrafficConesWithOverlapsRemoved)
         End If
-        
-        ibOriginal.Image = imgOriginalWithCones
 
-    End Sub
+        Return listOfTrafficConesWithOverlapsRemoved
+    End Function
 
     '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
     Function convexHullIsPointingUp(convexHull As Seq(Of Point)) As Boolean
@@ -277,5 +274,34 @@ Public Class frmMain
 
         Return listOfConesWithInnerCharRemoved
     End Function
+
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Sub drawGreenDotAtConeCenter(trafficCone As Seq(Of Point), ByRef image As Image(Of Bgr, Byte))
+        Dim coneMoments As MCvMoments = trafficCone.GetMoments()
+
+        Dim sngConeXCenterOfGravity As Single = CSng(coneMoments.GravityCenter.x)
+        Dim sngConeYCenterOfGravity As Single = CSng(coneMoments.GravityCenter.y)
+
+        Dim ptfFirstConeCenterOfGravity As PointF = New PointF(sngConeXCenterOfGravity, sngConeYCenterOfGravity)
+        Dim cfCenterOfCone As CircleF = New CircleF(ptfFirstConeCenterOfGravity, 3)
+
+        image.Draw(cfCenterOfCone, New Bgr(0, 255, 0), 0)
+    End Sub
+
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    Sub closeShowStepsWindows()
+        CvInvoke.cvDestroyWindow("imgOriginal")
+        CvInvoke.cvDestroyWindow("imgHSV")
+        CvInvoke.cvDestroyWindow("imgThreshLow")
+        CvInvoke.cvDestroyWindow("imgThreshHigh")
+        CvInvoke.cvDestroyWindow("imgThresh")
+        CvInvoke.cvDestroyWindow("imgThreshSmoothed")
+        CvInvoke.cvDestroyWindow("imgCanny")
+        CvInvoke.cvDestroyWindow("imgContours")
+        CvInvoke.cvDestroyWindow("imgAllConvexHulls")
+        CvInvoke.cvDestroyWindow("imgConvexHulls3To10")
+        CvInvoke.cvDestroyWindow("imgTrafficCones")
+        CvInvoke.cvDestroyWindow("imgTrafficConesWithOverlapsRemoved")
+    End Sub
 
 End Class
